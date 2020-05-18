@@ -19,6 +19,7 @@ GEdges = pickle.load(open("GEdges.dat", "rb"))
 # W_V1 and W_V2 are winning sets for each of the players with respect to the specification of the system
 W_V1 = pickle.load(open("W_V1.dat","rb"))
 W_V2 = pickle.load(open("W_V2.dat","rb"))
+WA = pickle.load(open("W.dat","rb"))
 V1 = [row[0] for row in W_V1]
 V2 = [row[0] for row in W_V2]
 N = 4
@@ -26,6 +27,71 @@ N = 4
 # System variables:
 sys_var = "Xr"
 fn = "reach_subroutine.avi"
+
+# Create graph for this example:
+# Makes the graph for the gridworld example:
+# Also returns a node_dict for which the input is a number and the output is the node name with the v1/v2 prefixes
+# V1: Nodes from which tester takes an action
+# V2: Nodes from which agent takes an action
+def make_graph(V1, V2, GEdges):
+    G = nx.Graph()
+    V_list = V1 + V2
+    node_list = []
+    for ii in range(len(V_list)):
+        node_list.append((ii, V_list[ii]))
+    node_dict = dict(node_list)
+    N = [ii for ii in range(len(V1) + len(V2))]
+    E = []
+    # Constructing a tuple of numbers:
+    for e in GEdges:
+        e0 = e[0]
+        e1 = e[1]
+        n0 = V_list.index(e0)
+        n1 = V_list.index(e1)
+        E.append((n0, n1))
+    G.add_edges_from(E)
+    G.add_nodes_from(N)
+    return G, node_dict
+
+# Defining Propositions:
+def propositions(p):
+    state_to_props = []
+    states_marked = [] # Keep list of tester states that have already been assigned priorities
+    for ii in range(len(p)):
+        lambda_prop = p[ii]
+        q_lambda_sat = [] # Keep track of set of states that satisfy the proposition lambda_prop
+        # States to be covered are environment states because we want to prompt the system to cover them 
+        for row in W_V1:
+            v = row[1]
+            xe = v[0]
+            xs = v[1]
+            if(lambda_prop(xs, xe) and (v not in states_marked)):
+                q_lambda_sat.append(row[0])
+                states_marked.append(row[0])
+        state_to_props.append((ii, q_lambda_sat))
+    P = dict(state_to_props)
+    return P
+
+## % Main contents of file:
+# Create graph G and return node dictionary connecting a number with a vertex:
+# That is, 0 == V1[0], 1==V1[1], ....
+# If l = len(V1), l = V2[0], l+1 = V2[1], and so on ...
+G, node_dict = make_graph(V1, V2, GEdges)
+num_node_dict = {v: k for k, v in node_dict.items()}
+p = [lambda x_s, x_e: (x_s == x_e + 1), lambda x_s, x_e: (x_s == x_e - 1), lambda x_s, x_e: (x_s == x_e + N), lambda x_s, x_e: (x_s == x_e - N), lambda x_s, x_e: (x_s == 4)]
+P = propositions(p)
+W_A_T_max = [num_node_dict[w] for w in WA[-1][0]] # Maximum winning set with tester nodes for the agent's specification
+
+# Define weight function for tester nodes depending on the proposition they hold:
+def weight(s):
+    w = 100 # Default; no label
+    node = node_dict[s]
+    for ii in range(len(p)):
+        states_ii = P[ii]
+        if(node in states_ii):
+            w = ii
+            break
+    return w
 
 # Each tester state has a cost c, a cost-to-go function V, and strategy of the environment pi_env
 # G is the goal set that we're trying to reach: <>S
@@ -76,7 +142,8 @@ def pre(W0, V, G):
         for p in a_pre:
             if p not in preS:
                 preS.append(p)
-    return preS, Vnew
+    W_A_preS = list(set(preS) & set(W_A_T_max))
+    return W_A_preS, Vnew
 
 # For a tester node, this function returns the minimum weight successor to s in the game graph G.
 def min_successor(s, V, G):
@@ -92,71 +159,13 @@ def min_successor(s, V, G):
     successor = successors[successor_weight.index(min_weight)]
     return successor
  
-# Makes the graph for the gridworld example:
-# Also returns a node_dict for which the input is a number and the output is the node name with the v1/v2 prefixes
-# V1: Nodes from which tester takes an action
-# V2: Nodes from which agent takes an action
-def make_graph(V1, V2, GEdges):
-    G = nx.Graph()
-    V_list = V1 + V2
-    node_list = []
-    for ii in range(len(V_list)):
-        node_list.append((ii, V_list[ii]))
-    node_dict = dict(node_list)
-    N = [ii for ii in range(len(V1) + len(V2))]
-    E = []
-    # Constructing a tuple of numbers:
-    for e in GEdges:
-        e0 = e[0]
-        e1 = e[1]
-        n0 = V_list.index(e0)
-        n1 = V_list.index(e1)
-        E.append((n0, n1))
-    G.add_edges_from(E)
-    G.add_nodes_from(N)
-    return G, node_dict
 
-# Defining Propositions:
-def propositions(p):
-    state_to_props = []
-    states_marked = [] # Keep list of tester states that have already been assigned priorities
-    for ii in range(len(p)):
-        lambda_prop = p[ii]
-        q_lambda_sat = [] # Keep track of set of states that satisfy the proposition lambda_prop
-        for row in W_V2:
-            v = row[1]
-            xe = v[0]
-            xs = v[1]
-            if(lambda_prop(xs, xe) and (v not in states_marked)):
-                q_lambda_sat.append(row[0])
-                states_marked.append(row[0])
-        state_to_props.append((ii, q_lambda_sat))
-    P = dict(state_to_props)
-    return P
-
-## % Main contents of file:
-# Create graph G and return node dictionary connecting a number with a vertex:
-# That is, 0 == V1[0], 1==V1[1], ....
-# If l = len(V1), l = V2[0], l+1 = V2[1], and so on ...
-G, node_dict = make_graph(V1, V2, GEdges)
-num_node_dict = {v: k for k, v in node_dict.items()}
-p = [lambda x_s, x_e: (x_s == x_e + 1), lambda x_s, x_e: (x_s == x_e - 1), lambda x_s, x_e: (x_s == x_e + N), lambda x_s, x_e: (x_s == x_e - N), lambda x_s, x_e: (x_s == 4)]
-P = propositions(p)
-
-# Define weight function for tester nodes depending on the proposition they hold:
-def weight(s):
-    w = 100 # Default; no label
-    node = node_dict[s]
-    for ii in range(len(p)):
-        states_ii = P[ii]
-        if(node in states_ii):
-            w = ii
-            break
-    return w
 
 # Given a set of winning nodes W_N in format "v1_20", return a set of states with numbers that correspond to the winning nodes
+# Furthermore, it will return the set of winning states that are also in the winning set of the agent: <A>W^T_max
 def win_set(W_N):
-    S = [num_node_dict[k] for k in W_N]
+    W0_T = [num_node_dict[k] for k in W_N]
+    S = list(set(W0_T) & set(W_A_T_max))
     return S
 
 # Constructing the set of winning states for each proposition:
@@ -193,12 +202,12 @@ def test_strategy(prp):
     v0 = max_winning_set[min_win_index]
     return v0, pi_env
 
-# Get the vertex representation from the node form:
-def get_vertex(v0, player):
+# Get the vertex (ENV, SYS) representation from the node/number form:
+def get_vertex(v0, p):
     v0_vertex = node_dict[v0]
-    if(player == 'e'):
+    if(p == 'e'):
         v0_v = [s[1] for s in W_V1 if s[0] == v0_vertex]
-    if(player == 's'):
+    if(p == 's'):
         v0_v = [s[1] for s in W_V2 if s[0] == v0_vertex]
     return v0_v[0]
 
@@ -221,12 +230,16 @@ def system_controller(start, sys_control, cone_locs):
     return finish
 
 ## Constructing system and tester strategies:
-prp = P[0]
+prp = P[1]
 q0, pi_env = test_strategy(prp)
 q0_vertex = get_vertex(q0, 'e')
 pi_sys = system_K(q0_vertex)
 
 ## Constructing a test run:
+# Variables: *q0: old vertex number
+#            *q0_vertex: old vertex in a tuple form: (env, sys)
+#            *q: new vertex number
+#            *q_vertex: new vertex in tuple form: (env, sys)
 T = 10 # Horizon. Each player gets T turns
 step = 0
 q = q0 # v0_v is the vertex corresponding to the initial vertex
