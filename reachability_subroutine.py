@@ -26,7 +26,7 @@ N = 4
 
 # System variables:
 sys_var = "Xr"
-fn = "reach_subroutine.avi"
+fn = "reach_subroutine_prop_4.avi"
 
 # Create graph for this example:
 # Makes the graph for the gridworld example:
@@ -158,8 +158,6 @@ def min_successor(s, V, G):
     min_weight = min(feas_successor) # Finds the minimum weight successor from all feasible transitions. Feasible = transition that continues to be in the winning set
     successor = successors[successor_weight.index(min_weight)]
     return successor
- 
-
 
 # Given a set of winning nodes W_N in format "v1_20", return a set of states with numbers that correspond to the winning nodes
 # Furthermore, it will return the set of winning states that are also in the winning set of the agent: <A>W^T_max
@@ -170,7 +168,7 @@ def win_set(W_N):
 
 # Constructing the set of winning states for each proposition:
 for ii in range(len(P)):
-    S = win_set(P[ii])
+    S = win_set(P[ii])            
     W, V, pi_env = compute_winning_set(S, G)
     prp = p[ii]
     print("Set of propositions: ")
@@ -209,14 +207,20 @@ def get_vertex(v0, p):
         v0_v = [s[1] for s in W_V1 if s[0] == v0_vertex]
     if(p == 's'):
         v0_v = [s[1] for s in W_V2 if s[0] == v0_vertex]
-    return v0_v[0]
+    return [v0_v[0][0], v0_v[0][1]] # return list form
 
 # Set the vertex representation from the node form to a number form:
 def set_vertex(v0, player):
     if(player == 's'):
-        q0_v = [s[0] for s in W_V2 if s[1] == v0]
+        for s in W_V2:
+            v = s[1]
+            if(v0[0] == v[0] and v0[1]==v[1]):
+                q0_v = s[0]
     if(player == 'e'):
-        q0_v = [s[0] for s in W_V1 if s[1] == v0]
+        for s in W_V1:
+            v = s[1]
+            if(v0[0] == v[0] and v0[1]==v[1]):
+                q0_v = s[0]
     q = num_node_dict[q0_v]
     return q
 
@@ -229,8 +233,13 @@ def system_controller(start, sys_control, cone_locs):
     finish = [env_pos, sys_pos]
     return finish
 
+# Checking if a proposition is satisfied by a pair of coordinates:
+# Inputs to the propositions are (xs, xe) and the coordinates are in the form (xe, xs)
+def check_sat_spec(prop, vert):
+    return prop(vert[1], vert[0])
+
 ## Constructing system and tester strategies:
-prp = P[1]
+prp = P[4]
 q0, pi_env = test_strategy(prp)
 q0_vertex = get_vertex(q0, 'e')
 pi_sys = system_K(q0_vertex)
@@ -244,10 +253,22 @@ T = 10 # Horizon. Each player gets T turns
 step = 0
 q = q0 # v0_v is the vertex corresponding to the initial vertex
 q_vertex = q0_vertex # Number equivalent of the vertex
-traj = [q] # Keeping track of trajectory
+traj = [q0_vertex] # Keeping track of trajectory
 player = 'e'
 cone_locations = []
+# The following list of propositions indicates the list of atomic propositions the tester and agent need to satisfy. If both of them satisfy it, then we can move on:
+tester_sat_prop = lambda x_s, x_e: (x_s == 4)
+agent_sat_prop = lambda x_s, x_e: (x_s == 1)
+
+# Booleans to check if the tester and the system have both satisfied their specifications:
+# Specifications are reached in environment states
+tester_sat_spec = 0
+agent_sat_spec = 0
+tester_sat_spec = check_sat_spec(tester_sat_prop, q0_vertex)
+sat_spec = [[0,0] for ii in range(T)] # First coordinate tracks tester specification; second coordinate tracks agent specification 
 while step < T:
+    if(step>0):
+        sat_spec[step] = sat_spec[step-1] # If a spec has been satisfied, then it has been satisfied. 
     if(player == 'e'):
         q = pi_env[q0]
         q_vertex = get_vertex(q, 's')
@@ -263,6 +284,16 @@ while step < T:
         q0_vertex = q_vertex
         player = 'e'
         traj.append(q0_vertex)
+    agent_sat_spec = check_sat_spec(agent_sat_prop, q0_vertex)
+    if (agent_sat_spec and ~sat_spec[step][1]):
+        sat_spec[step][0] = 1
+
+    tester_sat_spec = check_sat_spec(tester_sat_prop, q0_vertex)
+    if (tester_sat_spec and ~sat_spec[step][0]):
+        sat_spec[step][0] = 1
+    # If all propositions have been satisfied, then break out of the loop
+    if sat_spec[step]:
+        break
     step = step + 1
 
 ## Simulating a test run using matplotlib:
