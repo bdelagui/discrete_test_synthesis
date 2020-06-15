@@ -13,6 +13,7 @@ import matplotlib
 import os
 import math
 import networkx as nx
+import pdb
 # from grid_construct import grid
 
 # % ------- Class Gridworld ---------- % #
@@ -50,6 +51,8 @@ class GridWorld:
         self.G = []
         self.gridT = None
     
+    def get_player(self, player_name):
+        return self.players[player_name]
     def add_player(self, player_name, player_transitions_type, player_type):
         self.player_names.append(player_name)
         self.players[player_name] = Player(player_name, self, player_transitions_type, player_type)
@@ -156,7 +159,11 @@ class Player:
                 T[C2N[(cell[0], cell[1])] - 1] = [C2N[(c[0], c[1])] for c in cell_trans]
                 
                 if(bump_idx):
+                    # Clearing the transition in the cell of the bumped row and adding transitions to the one adjacent to it
                     if(row == bump_idx):
+                        cell = [row, col]
+                        T[C2N[(cell[0], cell[1])] - 1] = []
+                        
                         cell = [row, col+1]
                         cell_trans = [[row+1, col+1], [row-1, col+1]]
                         T[C2N[(cell[0], cell[1])] - 1] = [C2N[(c[0], c[1])] for c in cell_trans]
@@ -209,7 +216,7 @@ class Player:
 # + Also returns a list pEdges of length Ne (Ns) where each element of the list points to other possible transitions. So pEdges[3] returns the possible transitions of the collective environment from state 3.
 class GameGraph:
     def __init__(self, Nrows, Ncols, static_obstacles, cell2node, node2cell, players):
-        self.G = nx.Graph()
+        self.G = nx.DiGraph()
         self.M = Nrows
         self.N = Ncols
         self.static_obs = static_obstacles
@@ -221,6 +228,7 @@ class GameGraph:
         self.Ns = None
         self.Ne = None
         self.V = None
+        self.Vweight = None # Dictionary mapping vertices to their weights
         self.E = None
         self.U = None
         self.C2N = cell2node.copy()
@@ -230,14 +238,34 @@ class GameGraph:
         self.G.add_edges_from(self.E)
         self.G.add_nodes_from(self.V)
         self.unsafe_states()
-        self.Val_sys = self.init_val_function() # Value function corresponding to system objective
-        self.Val_env = self.init_val_function() # Value function corresponding to environment objective
-
-    def init_val_function(self):
+        self.set_vertex_weight()
+        self.Val_sys = self.init_val_function('s') # Value function corresponding to system objective
+        self.Val_env = self.init_val_function('e') # Value function corresponding to environment objective
+    def set_vertex_weight(self, *args):
+        if args:
+            self.Vweight = None
+        else:
+            Vweight_list = [[v, 0] for v in self.V]
+            self.Vweight = dict(Vweight_list)
+    def init_val_function(self, ptype):
+        Val_list = []
+        if ptype == 's':
+            base = 'inf'
+        elif ptype == 'e':
+            base = '0'
+        else:
+            print("Error: input argument pytpe must be 's' or 'e'")
         for vi in self.V:
-            Val_list = Val_list.append((vi, []))
+            Val_list.append([vi, float(base)])
         Val = dict(Val_list)
         return Val
+    def get_value_function(self, ptype):
+        if ptype == 's':
+            return self.Val_sys
+        elif ptype == 'e':
+            return self.Val_env
+        else:
+            print("Err: input argument must be 's' or 'e'")
     def setup_static_grid(self):
         for row in range(1, self.M+1):
             for col in range(1, self.N+1):
@@ -414,45 +442,84 @@ class GameGraph:
 # This function is the predecessor operator that computes the set of states from which for all
 #   + pre: Predecessor computation on a game graph
 #   + W0: Winning set that the transition must end up in
-#   + ptype: 's' or 'e' for system or environment, i.e whether the pre set should be comprised of system or enviornment states
+#   + ptype: 's' or 'e' for system or environment, i.e whether the pre set should be comprised of system or environment states
 #   + quantifier: 'exists' or 'forall'
     def pre(self, W0, ptype, quantifier):
         pre_W0 = []
         for n0 in W0:
-            pred_n0 = self.G.predecessors(n0)
+            pred_n0 = list(self.G.predecessors(n0))
             if(quantifier == 'exists'):
                 pre_W0 = pred_n0.copy()
             if(quantifier == 'forall'):
                 for pred_n0_ii in pred_n0:
-                    pred_n0_ii_succ = G.self.successors(pred_n0_ii)
-                    if all(pred_n0_succ) in W0:
-                        pre_W0.extend(pred_n0_ii)
+                    pred_n0_ii_succ = list(self.G.successors(pred_n0_ii))
+                    pred_n0_ii_succ_W0 = [p in W0 for p in pred_n0_ii_succ]
+                    if all(pred_n0_ii_succ_W0):
+                        if pred_n0_ii not in pre_W0:
+                            pre_W0.append(pred_n0_ii)
         pre_W0 = list(dict.fromkeys(pre_W0)) # Removes duplicates
         return pre_W0
 
+# This function needs to be called only after the initial value function has been set for each of the respective agents
 # Sets the value function for the system and the environment depending on their quantifiers. For the system, the quantifier does not change the value function. The environment might have different ways of setting the value function depending on the quantifier.
 # TODO: Change how the environemnt value function is set.
-    def determine_value(self, V, W0, quant, pytpe, N):
+# TODO: If the winning agent is the environment, the value function for the system states do not change no matter if the quantifier is forall or exists
+    def determine_value(self, V, W0, quant, pytpe, N, win_agent):
         Val = V.copy()
-        if(pytpe  == 's'):
-            for v in W0:
-                Val[v] = N
-        if(pytpe == 'e'):
-            if (quant == 'forall'):
+        if win_agent == 's':
+            if(pytpe  == 's'):
                 for v in W0:
-                    Val[v] = N-1
-            if (quant == 'exists'):
+                    Val[v] = N
+            if(pytpe == 'e'):
+                if (quant == 'forall'):
+                    for v in W0:
+                        Val[v] = N-1
+                if (quant == 'exists'):
+                    for v in W0:
+                        Val[v] = N-1
+        elif win_agent == 'e':
+            if ptype == 's':
+                if (quant == 'forall'):
+                    for v in W0:
+                        successors = list(self.G.successors(v))
+                        Val_successors = [Val[s] for s in successors]
+                        min_successor = successors[Val_successors.index(min(Val_successors))]
+                        Val[v] = Val[min_successor]
+                if (quant == 'exists'):
+                    for v in W0:
+                        successors = list(self.G.successors(v))
+                        Val_successors = [Val[s] for s in successors]
+                        min_successor = successors[Val_successors.index(min(Val_successors))]
+                        Val[v] = Val[min_successor]
+                    
+            if ptype == 'e':
                 for v in W0:
-                    Val[v] = N-1
+                    successors = list(self.G.successors(v))
+                    if successors != []:
+                        Val_successors = [Val[s] for s in successors]
+                        max_successor = successors[Val_successors.index(max(Val_successors))]
+                        Val[v] = self.Vweight[v] + Val[max_successor]
         return Val
 
 # Function to return set of winning states as forms of vertices in V by taking in a list of lists: [[env_cell], [sys_cell]] of environment and system locations where env and sys are cell locations of the environment and system on the gridworld respectively
     def set_win_states(self, goal_list):
+        goal_env = []
+        goal_sys = []
+        envdict = self.env_dict[0].copy()
+        sysdict = self.sys_dict[0].copy()
         for g in goal_list:
             genv = g[0]
             gsys = g[1]
-            env_node = self.C2N[genv]
-            sys_node = self.N2C[gsys]
+            env_node = self.C2N[(genv[0], genv[1])]
+            sys_node = self.C2N[(gsys[0], gsys[1])]
+            ne = envdict[env_node]
+            ns = sysdict[sys_node]
+            st = self.state(self.Ns, self.Ne, ns, ne)
+            env_st = "v1_"+str(st)
+            sys_st = "v2_"+str(st)
+            goal_env.append(env_st)
+            goal_sys.append(sys_st)
+        Wgoal = [goal_env, goal_sys]
         return Wgoal
 # The following function is to synthesize the reachability winning set:
 # + win_agent: the player ('s' or 'e') for which the winning set is being determined
@@ -465,41 +532,51 @@ class GameGraph:
     def win_reach(self, win_agent, goal, quant1, quant2):
         W = [[goal[0], goal[1]]]
         lW = len(W)
+        W0 = W[lW-1]
+        W0_sys = W0[1].copy()
+        W0_env = W0[0].copy()
         if (win_agent == 's'):
             other_agent = 'e'
+            quant_e = quant1
+            quant_s = quant2
             Val = self.Val_sys.copy()
+            for v in W0_sys:
+                Val[v] = 0
+            for v in W0_env:
+                Val[v] = 0
         else:
             other_agent = 's'
+            quant_s = quant1
+            quant_e = quant2
             Val = self.Val_env.copy()
+            assert(W0_sys == []) # We only want environment states in the original winning set of the system
+            for v in W0_env:
+                Val[v] = self.Vweight[v]
         # fixpoint_env checks if W0_env which is the winning set with environment states in it is a fixpoint
         # fixpoint_sys checks if W0_sys which is the winning set with system states in it is a fixpoint
         fixpoint_env = False
         fixpoint_sys = False
         N = 0
-        W0 = W[lW-1]
-        for ve in W0[0]:
-            Val[ve] = N
-        for vs in W0[1]:
-            Val[vs] = N
+
         while (not fixpoint_env or not fixpoint_sys):
             N += 1
             lW = len(W)
             W0 = W[lW - 1]
             # Predecessor set to system states:
-            W0_sys = W0[1]
-            W0_env = W0[0]
-            pre_sys = self.pre(W0_sys, 'e', quant1)
-            pre_env = self.pre(W0_env, 's', quant2)
+            W0_sys = W0[1].copy()
+            W0_env = W0[0].copy()
+            pre_sys = self.pre(W0_sys, 'e', quant_e)
+            pre_env = self.pre(W0_env, 's', quant_s)
             Wnew_sys = W0_sys.copy()
             Wnew_env = W0_env.copy()
             if pre_env:
-                Wnew_sys.extend(pre_env)
+                Wnew_sys.extend(pre_env) # pre_sys contains system states and is a predecessor to a environment winning set
                 Wnew_sys = list(dict.fromkeys(Wnew_sys)) # Removes duplicates
             if pre_sys:
-                Wnew_env.extend(pre_sys)
+                Wnew_env.extend(pre_sys) # pre_sys contains environment states and is a predecessor to a system winning set
                 Wnew_env = list(dict.fromkeys(Wnew_env)) # Removes duplicates
-            Val = self.determine_value(Val, pre_sys, 'e', quant1, N)
-            Val = self.determine_value(Val, pre_env, 's', quant2, N)
+            Val = self.determine_value(Val, pre_sys, 'e', quant_e, N, win_agent)
+            Val = self.determine_value(Val, pre_env, 's', quant_s, N, win_agent)
             Wcur = [Wnew_env, Wnew_sys]
             if Wnew_env == W0_env:
                 fixpoint_env = True
@@ -534,15 +611,54 @@ def main():
     GW.add_player('agent', agent_transitions, 's')
     GW.add_player('tester', tester_transitions, 'e')
 
+    # Checking player transitions have been correctly added:
+    tester = GW.get_player('tester')
+    tester_transitions = tester.get_transitions()
+
     # Making game graph and getting vertices and edges:
     GW.construct_graph()
     GAME = GW.get_game_graph()
     E, V = GAME.get_edges_vertices()
     
     # Printing out edges and vertices:
-    print(E)
+    # print(E)
 
     # Finding the system winning set and value function:
+    bump_row=5
+    sys_goal_cell = [M, N]
+    env_goal_cell = [[ii, tester_col] for ii in range(1,M+1) if ii!=bump_row]
+    extra_cells = [[bump_row-1, tester_col+1], [bump_row, tester_col+1], [bump_row+1, tester_col+1]]
+    env_goal_cell.extend(extra_cells)
+    goal_cells = [[env_cell, sys_goal_cell] for env_cell in env_goal_cell]
+    goal_vertices = GAME.set_win_states(goal_cells)
+    assert(all([elem in V for elem in goal_vertices[0]]))
+    assert(all([elem in V for elem in goal_vertices[1]]))
 
+    # Robust Pre for system winning set computation:
+    quant_env = 'forall'
+    quant_sys = 'exists'
+    win_agent = 's'
+    W_sys = GAME.win_reach(win_agent, goal_vertices, quant_env, quant_sys)
+    Val_sys = GAME.get_value_function(win_agent)
+    pdb.set_trace()
+    # Finding the environment winning set and value function:
+    # !!!! The environment and the system places need to be switched
+    # IMPORTANT_NOTE: When we find the environment winning set, we need to have environment and system cells switched
+    sys_goal_cell = [[1, obs_col], [M, obs_col]]
+    env_goal_cell = [[ii, tester_col] for ii in range(1,M+1) if ii!=bump_row]
+    env_goal_cell.extend(extra_cells)
+    goal_cells = [[env_cell, sys_cell] for env_cell in env_goal_cell for sys_cell in sys_goal_cell]
+    goal_vertices = GAME.set_win_states(goal_cells)
+
+    # Robust Pre for system winning set computation:
+    quant_env = 'exists'
+    quant_sys = 'exists'
+    win_agent = 'e'
+    W_env = GAME.win_reach(win_agent, goal_vertices, quant_env, quant_sys)
+    Val_env = GAME.get_value_function(win_agent)
+
+    #   Printing the value functions:
+    pdb.set_trace()
+    print(Val_sys)
 if __name__ == '__main__':
     main()
