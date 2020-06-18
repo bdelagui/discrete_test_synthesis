@@ -34,8 +34,8 @@ import math
 import networkx as nx
 import pdb
 
-import Player_class
-import Game_graph_class
+import Player_class as pc
+import Game_graph_class as gg
 
 class GridWorld:
     def __init__(self, size):
@@ -57,7 +57,7 @@ class GridWorld:
         return self.players[player_name]
     def add_player(self, player_name, player_transitions_type, player_type):
         self.player_names.append(player_name)
-        self.players[player_name] = Player(player_name, self, player_transitions_type, player_type)
+        self.players[player_name] = pc.Player(player_name, self, player_transitions_type, player_type)
 
         if(player_type == 's'):
             self.Nsys += 1
@@ -114,7 +114,8 @@ class GridWorld:
         self.cell2node = cell2node.copy()
     
     def construct_graph(self):
-        self.G = GameGraph(self.Nrows, self.Ncols, self.static_obstacles, self.cell2node, self.node2cell, self.players)
+        self.G = gg.GameGraph(self.Nrows, self.Ncols, self.static_obstacles, self.cell2node, self.node2cell, self.players)
+    
     def get_game_graph(self):
         return self.G
 
