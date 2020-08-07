@@ -1,6 +1,6 @@
 # Apurva Badithela 5/23/2020
 # This script generates gridworlds with static and moving obstacles
-
+# This is just to test something for github
 import numpy as np
 import random
 import matplotlib.pyplot as plt
