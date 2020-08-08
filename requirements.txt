@@ -1,7 +1,0 @@
-# Install the repositories using: pip install -r requirements.txt
-numpy
-itertools
-pickle
-matplotlib
-networkx
-pandas
